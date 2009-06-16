@@ -7,7 +7,10 @@ This plugin is used to convert coordinate between utm and latitude longitude sys
 Example
 =======
 
-Example goes here.
+ * Utm to latitude longitude
+   CoordinatesConverter.new({:x => utm_x, :y => utm_y, :zone => utm_zone}).utmxy2latlng
 
+ * Latitude longitude to utm
+   CoordinatesConverter.new({:lat => lat, :lng => lng}).latlng2utmxy
 
 Copyright (c) 2009 [name of plugin creator], released under the MIT license
