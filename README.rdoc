@@ -12,4 +12,4 @@ This plugin is used to convert coordinate between utm and latitude longitude sys
 * Latitude longitude to utm
  CoordinatesConverter.new({:lat => lat, :lng => lng}).latlng2utmxy
 
-Copyright (c) 2009 [name of plugin creator], released under the MIT license
+Copyright (c) 2009 [Lleïr Borràs Metje], released under the MIT license
