@@ -1,22 +1,18 @@
-# CoordinatesConverter
-require "math.rb"
 class CoordinatesConverter
+  attr_reader :x, :y, :zone, :northern_hemisphere, :lat, :lng
 
-  attr_reader :x
-  attr_reader :y
-  attr_reader :zone
-  attr_reader :northern_hemisphere
-  attr_reader :lat
-  attr_reader :lng
- 
-  PI = Math::PI
-  UTM_SCALE_FACTOR = 0.9996
-  # Ellipsoid model constants (actual values here are for WGS84) 
-  SM_A = 6378137.0
-  SM_B = 6356752.314
-  SM_ECC_SQUARED = 6.69437999013e-03
+  MAJOR_AXIS = 6378137.0
+  MINOR_AXIS = 6356752.3
+  ECC = (MAJOR_AXIS * MAJOR_AXIS - MINOR_AXIS * MINOR_AXIS) / (MAJOR_AXIS * MAJOR_AXIS)
+  ECC2 = ECC / (1.0 - ECC)
+  K0 = 0.9996
+  E4 = ECC * ECC
+  E6 = ECC * E4
 
-
+=begin 
+  Y_ERROR = 0.0017442271873235882
+	X_ERROR = 0.001317089164991181
+=end
   # Initializes a new instance of CoordinatesConverter
   # == Parameters
   # utm
@@ -28,12 +24,12 @@ class CoordinatesConverter
   # * :lat => the latitude coordinate, as a float. Default 0.
   # * :lng => the longitude coordinate, as a float. Default 0.
   def initialize(opts={})
-    @x=opts[:x] || 0
-    @y=opts[:y] || 0
+    @x=opts[:x].to_f || 0
+    @y=opts[:y].to_f || 0
     @zone=opts[:zone] || 31
     @northern_hemisphere=opts[:northern_hemisphere] || true
-    @lat=opts[:lat] || 0
-    @lng=opts[:lng] || 0
+    @lat=(opts[:lat].to_f > -180 && opts[:lat].to_f < 180 ? opts[:lat].to_f : 0)
+    @lng=(opts[:lng].to_f > -90 && opts[:lng].to_f < 90 ? opts[:lng].to_f : 0)
   end
 
   def x=(x)
@@ -47,7 +43,7 @@ class CoordinatesConverter
   def zone=(zone)
     @zone = zone.to_i
   end
-  
+
   def northern_hemisphere=(hemisphere)
     @northern_hemisphere = (hemisphere == true)
   end
@@ -57,199 +53,101 @@ class CoordinatesConverter
   end
 
   def lng=(lng)
-    @lng = lng.to_f if(lng.to_f > -90 && lng.to_f < 90)
+   @lng = lng.to_f if(lng.to_f > -90 && lng.to_f < 90)
+  end
+
+
+  def meridianDist(lat)
+    c1 = MAJOR_AXIS * (1 - ECC / 4 - 3 * E4 / 64 - 5 * E6 / 256)
+    c2 = -MAJOR_AXIS * (3 * ECC / 8 + 3 * E4 / 32 + 45 * E6 / 1024)
+    c3 = MAJOR_AXIS * (15 * E4 / 256 + 45 * E6 / 1024)
+    c4 = -MAJOR_AXIS * 35 * E6 / 3072
+
+    (c1 * lat + c2 * Math.sin(lat * 2) + c3 * Math.sin(lat * 4) + c4 * Math.sin(lat * 6))
   end
 
   def latlng2utmxy
-    @zone = (((lng + 180) / 6) +1).to_f.floor
-    
-    xy=maplatlng2xy
+    centeralMeridian = Math::degree2radian -((30 - @zone) * 6 + 3)
 
-    # Adjust easting and northing for UTM system. 
-    @x = xy[0] * UTM_SCALE_FACTOR + 500000
-    @y = xy[1] * UTM_SCALE_FACTOR
-    @y += 10000000 if (@y < 0)
+    lat = Math::degree2radian(@lat + Y_ERROR)
+    lon = Math::degree2radian(@lng + X_ERROR)
+
+    latSin = Math.sin(lat)
+    latCos = Math.cos(lat)
+    latTan = latSin / latCos
+    latTan2 = latTan * latTan
+    latTan4 = latTan2 * latTan2
+
+    n = MAJOR_AXIS / Math.sqrt(1 - ECC * (latSin*latSin))
+    c = ECC2 * latCos*latCos
+    a = latCos * (lon - centeralMeridian)
+    m = meridianDist(lat)
+
+    temp5 = 1.0 - latTan2 + c
+    temp6 = 5.0 - 18.0 * latTan2 + latTan4 + 72.0 * c - 58.0 * ECC2
+    temp11 = a**5#Math.pow(a, 5)
+
+    @x = K0 * n * (a + (temp5 * a**3) / 6.0 + temp6 * temp11 / 120.0) + 500000
+
+    temp7 = (5.0 - latTan2 + 9.0 * c + 4.0 * (c*c)) * a**4 / 24.0
+    temp8 = 61.0 - 58.0 * latTan2 + latTan4 + 600.0 * c - 330.0 * ECC2
+    temp9 = temp11 * a / 720.0
+
+    @y = K0 * (m + n * latTan * ((a * a) / 2.0 + temp7 + temp8 * temp9))
 
     {:x => @x, :y => @y, :zone => @zone}
   end
 
-  def maplatlng2xy
-    phi = Math::degree2radian(lat)
-    lambda_ = Math::degree2radian(lng)
-    lambda0 = utm_central_meridian
-
-    xy=[]
-
-    # Precalculate ep2 
-    ep2 = ((SM_A ** 2) - (SM_B ** 2)) / (SM_B ** 2)
-
-    # Precalculate nu2 
-    nu2 = ep2 * (Math::cos(phi) ** 2)
-
-    # Precalculate N 
-    n = (SM_A ** 2) / (SM_B * Math::sqrt(1 + nu2))
-
-    # Precalculate t 
-    t = Math::tan(phi)
-    t2 = t * t
-
-    # Precalculate l 
-    l = lambda_ - lambda0
-
-    # Precalculate coefficients for l**n in the equations below so a normal human being can read the expressions for easting and northing -- l**1 and l**2 have coefficients of 1
-    l3coef = 1 - t2 + nu2
-
-    l4coef = 5 - t2 + 9 * nu2 + 4 * (nu2 * nu2)
-
-    l5coef = 5 - 18 * t2 + (t2 * t2) + 14 * nu2 - 58 * t2 * nu2
-
-    l6coef = 61 - 58 * t2 + (t2 * t2) + 270 * nu2 - 330 * t2 * nu2
-
-    l7coef = 61 - 479 * t2 + 179 * (t2 * t2) - (t2 * t2 * t2)
-
-    l8coef = 1385 - 3111 * t2 + 543 * (t2 * t2) - (t2 * t2 * t2)
-
-    # Calculate easting (x) 
-    xy << n * Math::cos(phi) * l + ((n / 6) * (Math::cos(phi) ** 3) * l3coef * (l ** 3)) + ((n / 120) * (Math::cos(phi) ** 5) * l5coef * (l ** 5)) + ((n / 5040) * (Math::cos(phi) ** 7) * l7coef * (l ** 7))
-    # Calculate northing (y) 
-    xy << arc_length_of_meridian + (t / 2 * n * (Math::cos(phi) ** 2) * (l ** 2)) + (t / 24 * n * (Math::cos(phi) ** 4) * l4coef * (l ** 4)) + (t / 720 * n * (Math::cos(phi) ** 6) * l6coef * (l ** 6)) + (t / 40320 * n * (Math::cos(phi) ** 8) * l8coef * (l ** 8))
-    xy
-  end
-
-  def arc_length_of_meridian
-    phi = Math::degree2radian(lat)
-    # Precalculate n 
-    n = (SM_A - SM_B) / (SM_A + SM_B)
-
-    # Precalculate alpha 
-    alpha = ((SM_A + SM_B) / 2) * (1 + ((n ** 2) / 4) + ((n ** 4) / 64))
-
-    # Precalculate beta 
-    beta = (-3 * n / 2) + (9 * (n ** 3) / 16) + (-3 * (n ** 5) / 32)
-
-    # Precalculate gamma 
-    gamma = (15 * (n ** 2) / 16) + (-15 * (n ** 4) / 32)
-
-    # Precalculate delta 
-    delta = (-35 * (n ** 3) / 48) + (105 * (n ** 5) / 256)
-
-    # Precalculate epsilng 
-    epsilng = (315 * (n ** 4) / 512)
-
-    # Now calculate the sum of the series and return 
-    (alpha * (phi + (beta * Math::sin(2 * phi)) + (gamma * Math::sin(4 * phi)) + (delta * Math::sin(6 * phi)) + (epsilng * Math::sin(8 * phi))))
-  end
-
   def utmxy2latlng
-    x = @x
-    x -= 500000
-    x /= UTM_SCALE_FACTOR
-    
-    y = @y
-    y -= 10000000 unless @northern_hemisphere
-    y /= UTM_SCALE_FACTOR
-    mapxy2latlng(x,y)
-    {:lat => @lat, :lng => @lng}
-  end
+    centeralMeridian = Math::degree2radian -((30 - @zone) * 6 + 3)
 
-  def utm_central_meridian
-    Math::degree2radian(@zone*6 -183)
-  end
- 
-  def mapxy2latlng(x,y)
-    #philambda = []
+    temp1 = Math.sqrt(1.0 - ECC)
+    ecc1 = (1.0 - temp1) / (1.0 + temp1)
+    ecc12 = ecc1 * ecc1
+    ecc13 = ecc1 * ecc12
+    ecc14 = ecc12 * ecc12
 
-    # Get the value of phif, the footpoint latitude. 
-    phif = footpoint_latitude
+    @x -= 500000.0
 
-    # Precalculate ep2 
-    ep2 = ((SM_A ** 2) - (SM_B ** 2)) / (SM_B ** 2)
+    m = @y / K0
+    um = m / (MAJOR_AXIS * (1.0 - (ECC / 4.0) - 3.0 * (E4 / 64.0) - 5.0 * (E6 / 256.0)))
 
-    # Precalculate cos (phif) 
-    cf = Math::cos(phif)
+    temp8 = (1.5 * ecc1) - (27.0 / 32.0) * ecc13
+    temp9 = ((21.0 / 16.0) * ecc12) - ((55.0 / 32.0) * ecc14)
 
-    # Precalculate nuf2 
-    nuf2 = ep2 * (cf ** 2)
+    latrad1 = um + temp8 * Math.sin(2 * um) + temp9 * Math.sin(4 * um) + (151.0 * ecc13 / 96.0) * Math.sin(6.0 * um)
 
-    # Precalculate Nf and initialize Nfpow 
-    nf = (SM_A ** 2) / (SM_B * Math::sqrt(1 + nuf2))
-    nfpow = nf
+    latsin1 = Math.sin(latrad1)
+    latcos1 = Math.cos(latrad1)
+    lattan1 = latsin1 / latcos1
+    n1 = MAJOR_AXIS / Math.sqrt(1.0 - ECC * latsin1*latsin1)
+    t2 = lattan1 * lattan1
+    c1 = ECC2 * latcos1 * latcos1
 
-    # Precalculate tf 
-    tf = Math::tan(phif)
-    tf2 = tf * tf
-    tf4 = tf2 * tf2
+    temp20 = (1.0 - ECC * latsin1 * latsin1)
+    r1 = MAJOR_AXIS * (1.0 - ECC) / Math.sqrt(temp20 * temp20 * temp20)
 
-    # Precalculate fractional coefficients for x**n in the equations below to simplify the expressions for latitude and lnggitude.
-    x1frac = 1 / (nfpow * cf)
+    d1 = @x / (n1*K0)
+    d2 = d1 * d1
+    d3 = d1 * d2
+    d4 = d2 * d2
+    d5 = d1 * d4
+    d6 = d3 * d3
 
-    nfpow *= nf # now equals nf**2) 
-    x2frac = tf / (2 * nfpow)
+    t12 = t2 * t2
+    c12 = c1 * c1
 
-    nfpow *= nf # now equals nf**3) 
-    x3frac = 1 / (6 * nfpow * cf)
+    temp1 = n1 * lattan1 / r1
+    temp2 = 5.0 + 3.0 * t2 + 10.0 * c1 - 4.0 * c12 - 9.0 * ECC2
+    temp4 = 61.0 + 90.0 * t2 + 298.0 * c1 + 45.0 * t12 - 252.0 * ECC2 - 3.0 * c12
+    temp5 = (1.0 + 2.0 * t2 + c1) * d3 / 6.0
+    temp6 = 5.0 - 2.0 * c1 + 28.0 * t2 - 3.0 * c12 + 8.0 * ECC2 + 24.0 * t12
 
-    nfpow *= nf # now equals nf**4) 
-    x4frac = tf / (24 * nfpow)
+    @lat = ((latrad1 - temp1 * (d2 / 2.0 - temp2 * (d4 / 24.0) + temp4 * d6 / 720.0)) * 180 / Math::PI) - Y_ERROR
+    @lng = ((centeralMeridian + (d1 - temp5 + temp6 * d5 / 120.0) / latcos1) * 180 / Math::PI) - X_ERROR
 
-    nfpow *= nf # now equals nf**5) 
-    x5frac = 1 / (120 * nfpow * cf)
+    @y += 500000.0
 
-    nfpow *= nf # now equals nf**6) 
-    x6frac = tf / (720 * nfpow)
-
-    nfpow *= nf # now equals nf**7) 
-    x7frac = 1 / (5040 * nfpow * cf)
-
-    nfpow *= nf # now equals nf**8) 
-    x8frac = tf / (40320 * nfpow)
-
-    # Precalculate polynomial coefficients for x**n. -- x**1 does not have a polynomial coefficient.
-    x2poly = -1 - nuf2
-
-    x3poly = -1 - 2 * tf2 - nuf2
-
-    x4poly = 5 + 3 * tf2 + 6 * nuf2 - 6 * tf2 * nuf2 - 3 * (nuf2 * nuf2) - 9 * tf2 * (nuf2 * nuf2)
-
-    x5poly = 5 + 28 * tf2 + 24 * tf4 + 6 * nuf2 + 8 * tf2 * nuf2
-
-    x6poly = -61 - 90 * tf2 - 45 * tf4 - 107 * nuf2 + 162 * tf2 * nuf2
-
-    x7poly = -61 - 662 * tf2 - 1320 * tf4 - 720 * (tf4 * tf2)
-
-    x8poly = 1385 + 3633 * tf2 + 4095 * tf4 + 1575 * (tf4 * tf2)
-
-    # Calculate latitude 
-    @lat = Math::radian2degree(phif + x2frac * x2poly * (x * x) + x4frac * x4poly * (x ** 4) + x6frac * x6poly * (x ** 6) + x8frac * x8poly * (x ** 8))
-
-    # Calculate lnggitude 
-    @lng = Math::radian2degree(utm_central_meridian + x1frac * x + x3frac * x3poly * (x ** 3) + x5frac * x5poly * (x ** 5) + x7frac * x7poly * (x ** 7))
-  end 
-
-  def footpoint_latitude
-    # Precalculate n (Eq. 10.18) 
-    n = (SM_A - SM_B) / (SM_A + SM_B)
-
-    # Precalculate alpha_ (Eq. 10.22) 
-    # (Same as alpha in Eq. 10.17) 
-    alpha_ = ((SM_A + SM_B) / 2) * (1 + ((n ** 2) / 4) + ((n ** 4) / 64))
-
-    # Precalculate y_ (Eq. 10.23) 
-    y_ = y / alpha_
-
-    # Precalculate beta_ (Eq. 10.22) 
-    beta_ = (3 * n / 2) + (-27 * (n ** 3) / 32) + (269 * (n ** 5) / 512)
-
-    # Precalculate gamma_ (Eq. 10.22) 
-    gamma_ = (21 * (n ** 2) / 16) + (-55 * (n ** 4) / 32)
-
-    # Precalculate delta_ (Eq. 10.22) 
-    delta_ = (151 * (n ** 3) / 96) + (-417 * (n ** 5) / 128)
-
-    # Precalculate epsilng_ (Eq. 10.22) 
-    epsilng_ = (1097 * (n ** 4) / 512)
-
-    # Now calculate the sum of the series (Eq. 10.21) 
-    (y_ + (beta_ * Math::sin(2 * y_)) + (gamma_ * Math::sin(4 * y_)) + (delta_ * Math::sin(6 * y_)) + (epsilng_ * Math::sin(8 * y_)))
+    {:lat => @lat, :lng => @lng, :zone => @zone}
   end
 end
