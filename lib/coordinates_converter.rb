@@ -8,11 +8,7 @@ class CoordinatesConverter
   K0 = 0.9996
   E4 = ECC * ECC
   E6 = ECC * E4
-
-=begin 
-  Y_ERROR = 0.0017442271873235882
-	X_ERROR = 0.001317089164991181
-=end
+  
   # Initializes a new instance of CoordinatesConverter
   # == Parameters
   # utm
