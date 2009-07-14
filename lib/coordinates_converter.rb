@@ -81,7 +81,7 @@ class CoordinatesConverter
 
     temp5 = 1.0 - latTan2 + c
     temp6 = 5.0 - 18.0 * latTan2 + latTan4 + 72.0 * c - 58.0 * ECC2
-    temp11 = a**5#Math.pow(a, 5)
+    temp11 = a**5
 
     @x = K0 * n * (a + (temp5 * a**3) / 6.0 + temp6 * temp11 / 120.0) + 500000
 
